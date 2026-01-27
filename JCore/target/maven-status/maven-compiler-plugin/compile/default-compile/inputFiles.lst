@@ -2,6 +2,8 @@ D:\Java\JCore\src\main\java\com\mycompany\jcore\controller\PersonController.java
 D:\Java\JCore\src\main\java\com\mycompany\jcore\entities\Car.java
 D:\Java\JCore\src\main\java\com\mycompany\jcore\entities\Person.java
 D:\Java\JCore\src\main\java\com\mycompany\jcore\JCore.java
+D:\Java\JCore\src\main\java\com\mycompany\jcore\repository\CarRepository.java
+D:\Java\JCore\src\main\java\com\mycompany\jcore\repository\PersonRepository.java
 D:\Java\JCore\src\main\java\vendor\ControllerComponent\Connection\Server.java
 D:\Java\JCore\src\main\java\vendor\ControllerComponent\Controller.java
 D:\Java\JCore\src\main\java\vendor\DI\ConfigDI.java
@@ -11,5 +13,6 @@ D:\Java\JCore\src\main\java\vendor\EntityOrm\Entity.java
 D:\Java\JCore\src\main\java\vendor\EntityOrm\EntityInfo.java
 D:\Java\JCore\src\main\java\vendor\EntityOrm\FieldNameWithType.java
 D:\Java\JCore\src\main\java\vendor\EntityOrm\RelationField.java
+D:\Java\JCore\src\main\java\vendor\EntityOrm\Repository.java
 D:\Java\JCore\src\main\java\vendor\JCoreMeta.java
 D:\Java\JCore\src\main\java\vendor\Security\Security.java

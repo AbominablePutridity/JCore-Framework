@@ -3,6 +3,12 @@ import java.sql.Statement;
 import vendor.EntityOrm.Entity;
 import vendor.EntityOrm.RelationField;
 
+/**
+ * Пример:
+ * 
+ * Сущность Car. (модель данных для работы с БД)
+ * @author User
+ */
 public class Car extends Entity {
     public String mark;
     public String color;

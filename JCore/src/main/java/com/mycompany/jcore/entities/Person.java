@@ -3,7 +3,9 @@ import java.sql.Statement;
 import vendor.EntityOrm.Entity;
 
 /**
+ * Пример:
  * 
+ * Сущность Person. (модель данных для работы с БД)
  * @author maxim
  */
 public class Person extends Entity {

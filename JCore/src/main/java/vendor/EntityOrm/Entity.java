@@ -256,15 +256,15 @@ public abstract class Entity {
     /**
      * Получить данные
      * @param dataToGet Что получить.
-     * @param conditionForGet Условие для получения.
+     * @param joinsWithConditionForGet Джоины и условия для получения.
      * @return Результат запроса получения.
      */
-    public ResultSet getData(String dataToGet, String conditionForGet) {
+    public ResultSet getData(String dataToGet, String joinsWithConditionForGet) {
         ResultSet resultSet = null;
         
         try {
             //Выполняем запрос
-            String sql = "SELECT " + dataToGet + " FROM " + this.getClass().getSimpleName() + " WHERE " + conditionForGet;
+            String sql = "SELECT " + dataToGet + " FROM " + this.getClass().getSimpleName() + " " + joinsWithConditionForGet;
             resultSet = statement.executeQuery(sql);
             
             return resultSet;

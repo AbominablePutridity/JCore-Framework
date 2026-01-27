@@ -1,11 +1,14 @@
 vendor\EntityOrm\Entity.class
 vendor\JCoreMeta.class
+com\mycompany\jcore\repository\CarRepository.class
 vendor\EntityOrm\EntityInfo.class
+vendor\EntityOrm\Repository.class
 vendor\DI\ConfigDI.class
 vendor\EntityOrm\ConfigJDBC.class
 com\mycompany\jcore\entities\Car.class
 vendor\EntityOrm\FieldNameWithType.class
 com\mycompany\jcore\controller\PersonController.class
+com\mycompany\jcore\repository\PersonRepository.class
 com\mycompany\jcore\entities\Person.class
 vendor\EntityOrm\RelationField.class
 vendor\Security\Security.class
