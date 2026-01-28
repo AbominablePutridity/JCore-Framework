@@ -364,4 +364,25 @@ public abstract class Entity {
         
         return rowsAffected;
     }
+    
+     /**
+     * Для более сложных случаев - метод для выполнения чистого SQL-запроса
+     * @param sqlQuery
+     * @return 
+     */
+    public ResultSet execRawSql(String sqlQuery)
+    {
+        ResultSet resultSet = null;
+        
+        try {
+            //Выполняем запрос
+            resultSet = statement.executeQuery(sqlQuery);
+            
+            return resultSet;
+        } catch (SQLException e) {
+            System.err.println("SQLError: " + e.getMessage());
+            
+            return resultSet;
+        }
+    }
 }
