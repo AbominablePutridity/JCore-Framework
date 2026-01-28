@@ -1,12 +1,15 @@
 package vendor.EntityOrm;
 
 import java.lang.reflect.Field;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import vendor.DI.ContainerDI;
 
 /**
  *
@@ -22,6 +25,9 @@ public abstract class Entity {
     }
     
     /**
+     * [!!!] Только для внутреннего использования в системе, формирования таблиц на основании метаданных сущности
+     * (во избежание выполнения клиентом SQL-иньекций)
+     * 
      * Создание метаданных потомка.
      * @return Обьект с метаданными потомка.
      */
@@ -51,6 +57,9 @@ public abstract class Entity {
     }
 
     /**
+     * [!!!] Только для внутреннего использования в системе, формирования таблиц на основании метаданных сущности
+     * (во избежание выполнения клиентом SQL-иньекций)
+     * 
      * Создание таблиц на основании метаданных потомка.
      * @param entityInfo Метаданные потомка.
      * @return Результат выполнения создания.
@@ -101,6 +110,9 @@ public abstract class Entity {
     }
     
     /**
+     * [!!!] Только для внутреннего использования в системе, формирования таблиц на основании метаданных сущности
+     * (во избежание выполнения клиентом SQL-иньекций)
+     * 
      * Преобразовать java тип данных поля в sql тип данных поля (для внутренней реализации запросов).
      * @param field поле для преобразования.
      * @param size размер длинны для данных поля.
@@ -174,6 +186,9 @@ public abstract class Entity {
     }
     
     /**
+     * [!!!]Только для внутреннего использования в системе, формирования таблиц на основании метаданных сущности
+     * (во избежание выполнения клиентом SQL-иньекций)
+     * 
      * Вставить данные в таблицу из обьекта сущности.
      * @param entityInfo Обьект с метаданными сущности.
      * @return Результат выполнения вставки данных в таблицу БД.
@@ -220,6 +235,9 @@ public abstract class Entity {
     }
     
     /**
+     * [!!!] Только для внутреннего использования в системе, формирования таблиц на основании метаданных сущности
+     * (во избежание выполнения клиентом SQL-иньекций)
+     * 
      * Вставить данные в таблицу из обьекта сущности.
      * @param entityInfo Обьект с метаданными сущности.
      * @return Результат выполнения вставки данных в таблицу БД.
@@ -254,28 +272,6 @@ public abstract class Entity {
     }
     
     /**
-     * Получить данные
-     * @param dataToGet Что получить.
-     * @param joinsWithConditionForGet Джоины и условия для получения.
-     * @return Результат запроса получения.
-     */
-    public ResultSet getData(String dataToGet, String joinsWithConditionForGet) {
-        ResultSet resultSet = null;
-        
-        try {
-            //Выполняем запрос
-            String sql = "SELECT " + dataToGet + " FROM " + this.getClass().getSimpleName() + " " + joinsWithConditionForGet;
-            resultSet = statement.executeQuery(sql);
-            
-            return resultSet;
-        } catch (SQLException e) {
-            System.err.println("SQLError: " + e.getMessage());
-            
-            return resultSet;
-        }
-    }
-    
-    /**
     * Просто выводит данные из ResultSet в консоль.
      * @param rs Обьект таблицы ResultSet для вывода в консоль.
     */
@@ -302,87 +298,21 @@ public abstract class Entity {
         System.out.println("Rows: " + count);
     }
     
-    /*
-    -- Обновить конкретную запись
-    UPDATE products 
-    SET price = 2999.99, 
-        stock = stock - 1
-    WHERE id = 15;
-    */
-    
     /**
-     * Обновить данные в базе данных по условию.
-     * @param dataToUpdate Данные которые нужно обновить.
-     * @param conditionForUpdate Условие для обновления.
-     * @return Результат обновления.
+     * Для выполнения запросов с параметрами клиентов. (с полной защитой от SQL-иньекций)
+     * 
+     * @param sql Запрос.
+     * @param params Параметры запроса.
+     * @throws SQLException 
      */
-    public Integer updateData(String dataToUpdate, String conditionForUpdate)
-    {
-        Integer rowsAffected = null;
+    public static void executeSQL(String sql, Object[] params) throws SQLException {
+        PreparedStatement ps = ContainerDI.getBean(Connection.class).prepareStatement(sql);
         
-        try {
-            String sql = "UPDATE " + this.getClass().getSimpleName() + "\n" +
-                    "SET " + dataToUpdate + "\n" + 
-                    "WHERE " + conditionForUpdate;
-            
-            rowsAffected = statement.executeUpdate(sql);
-            
-        } catch (SQLException e) {
-            System.err.println("SQLError: " + e.getMessage());
-            
-            return rowsAffected;
+        for (int i = 0; i < params.length; i++) {
+            ps.setObject(i + 1, params[i]);
         }
         
-        return rowsAffected;
-    }
-    
-    /*
-    -- Удалить одну запись
-    DELETE FROM users WHERE id = 1;
-    */
-    
-    /**
-     * Удалить данные в базе данных по условию.
-     * @param conditionForUpdate Условие для удаления.
-     * @return Результат удаления.
-     */
-    public Integer deleteData(String conditionForDelete)
-    {
-        Integer rowsAffected = null;
-        
-        try {
-            String sql = "DELETE FROM " + this.getClass().getSimpleName() + "\n" +
-                    "WHERE " + conditionForDelete;
-            
-            rowsAffected = statement.executeUpdate(sql);
-            
-        } catch (SQLException e) {
-            System.err.println("SQLError: " + e.getMessage());
-            
-            return rowsAffected;
-        }
-        
-        return rowsAffected;
-    }
-    
-     /**
-     * Для более сложных случаев - метод для выполнения чистого SQL-запроса
-     * @param sqlQuery
-     * @return 
-     */
-    public ResultSet execRawSql(String sqlQuery)
-    {
-        ResultSet resultSet = null;
-        
-        try {
-            //Выполняем запрос
-            resultSet = statement.executeQuery(sqlQuery);
-            
-            return resultSet;
-        } catch (SQLException e) {
-            System.err.println("SQLError: " + e.getMessage());
-            
-            return resultSet;
-        }
+        ps.execute();
+        ps.close();
     }
 }
