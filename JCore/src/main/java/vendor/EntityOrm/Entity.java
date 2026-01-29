@@ -301,18 +301,23 @@ public abstract class Entity {
     /**
      * Для выполнения запросов с параметрами клиентов. (с полной защитой от SQL-иньекций)
      * 
+     * Выполняет SQL-запрос и возвращает ResultSet.
+     * ВАЖНО: Вызывающий код должен закрыть ResultSet и PreparedStatement!
+     * 
      * @param sql Запрос.
      * @param params Параметры запроса.
+     * @return Обьект с данными ResultSet (обязательно закрыть после выполнения)
      * @throws SQLException 
      */
-    public static void executeSQL(String sql, Object[] params) throws SQLException {
-        PreparedStatement ps = ContainerDI.getBean(Connection.class).prepareStatement(sql);
-        
+    public static ResultSet executeSQL(String sql, Object[] params) throws SQLException {
+        // Получаем соединение и готовим стейтмент
+        PreparedStatement preparedStatement = ContainerDI.getBean(Connection.class).prepareStatement(sql);
+
         for (int i = 0; i < params.length; i++) {
-            ps.setObject(i + 1, params[i]);
+            preparedStatement.setObject(i + 1, params[i]);
         }
-        
-        ps.execute();
-        ps.close();
+
+        // Возвращаем результат выполнения (ps.close() здесь вызывать нельзя!)
+        return preparedStatement.executeQuery();
     }
 }
