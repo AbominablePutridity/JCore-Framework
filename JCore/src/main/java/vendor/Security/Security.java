@@ -3,6 +3,7 @@ package vendor.Security;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import vendor.EntityOrm.Entity;
 
 /**
  *
@@ -39,16 +40,18 @@ public class Security {
     {
         String[] clientLoginAndPasswordByQuery = extractLoginAndPasswordFromClientQuery(clientParams);
         
-        // Исправленный SQL-запрос с правильным синтаксисом
-        String sqlQuery = "SELECT " + roleField + " FROM " + tableName + 
-                         " WHERE " + loginField + " = '" + clientLoginAndPasswordByQuery[0] + 
-                         "' AND " + passwordField + " = '" + clientLoginAndPasswordByQuery[1] + "'";
-        
-        System.out.println("1090->() "+sqlQuery);
-        
         try {
-            // Выполняем запрос
-            ResultSet resultSet = statement.executeQuery(sqlQuery);
+            // Используем параметризованный запрос с ? вместо конкатенации строк, выполняем запрос
+            ResultSet resultSet = Entity.executeSQL(
+                "SELECT " + roleField + " FROM " + tableName + 
+                " WHERE " + loginField + " = ?" + 
+                " AND " + passwordField + " = ?",
+                new Object[]
+                {
+                    clientLoginAndPasswordByQuery[0],
+                    clientLoginAndPasswordByQuery[1]
+                }    
+            );
             
             // Если есть результат, берем роль и сравниваем ее с той ролью, которая нам нужна
             if (resultSet.next()) {
