@@ -320,4 +320,45 @@ public abstract class Entity {
         // Возвращаем результат выполнения (ps.close() здесь вызывать нельзя!)
         return preparedStatement.executeQuery();
     }
+    
+    /**
+    * Для выполнения операций вставки, обновления и удаления с параметрами. (с полной защитой от SQL-инъекций)
+    * 
+    * Выполняет SQL-запрос и возвращает количество затронутых строк.
+    * Автоматически закрывает PreparedStatement после выполнения.
+    * 
+    * @param sql Запрос (INSERT, UPDATE, DELETE).
+    * @param params Параметры запроса.
+    * @return Количество затронутых строк.
+    * @throws SQLException 
+    */
+   public static int executeUpdate(String sql, Object[] params) throws SQLException {
+       PreparedStatement preparedStatement = null;
+
+       try {
+           // Получаем соединение и готовим стейтмент
+           preparedStatement = ContainerDI.getBean(Connection.class).prepareStatement(sql);
+
+           // Устанавливаем параметры
+           if (params != null) {
+               for (int i = 0; i < params.length; i++) {
+                   preparedStatement.setObject(i + 1, params[i]);
+               }
+           }
+
+           // Выполняем запрос и возвращаем результат
+           return preparedStatement.executeUpdate();
+
+       } finally {
+           // Закрываем PreparedStatement в finally блоке для гарантии освобождения ресурсов
+           if (preparedStatement != null) {
+               try {
+                   preparedStatement.close();
+               } catch (SQLException e) {
+                   // Логируем ошибку закрытия, но не маскируем оригинальное исключение
+                   System.err.println("Ошибка при закрытии PreparedStatement: " + e.getMessage());
+               }
+           }
+       }
+   }
 }
