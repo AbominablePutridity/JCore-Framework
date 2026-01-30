@@ -73,7 +73,12 @@ public class Security {
         return "ACCESS_DENIED: ОШИБКА! Данные логина и пароля не верны, либо ваша роль не предусматривает получение данных по данному роуту!";
     }
     
-    private String[] extractLoginAndPasswordFromClientQuery(String[] clientParams)
+    /**
+     * Для предоставления данных пользователя из запроса
+     * @param clientParams параметры запроса пользователя
+     * @return Логин и Пароль пользователя
+     */
+    public String[] extractLoginAndPasswordFromClientQuery(String[] clientParams)
     {
         String[] loginAndPass = {null, null};
         

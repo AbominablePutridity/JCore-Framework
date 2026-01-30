@@ -13,7 +13,7 @@ import java.util.Map;
  * @author User
  */
 public class DataSerializer {
-    
+
     /**
     * Сериализует данные из формата ResultSet в формат List с использованием Map для хранения данных с ключами
     * @param resultSet
@@ -91,15 +91,15 @@ public class DataSerializer {
        }
 
        StringBuilder jsonBuilder = new StringBuilder();
-       jsonBuilder.append("[\n");
+       jsonBuilder.append("[");
 
        for (int i = 0; i < list.size(); i++) {
            Map<String, Object> row = list.get(i);
-           jsonBuilder.append("  {\n");
+           jsonBuilder.append("{");
 
            int entryIndex = 0;
            for (Map.Entry<String, Object> entry : row.entrySet()) {
-               jsonBuilder.append("    \"")
+               jsonBuilder.append("\"")
                          .append(entry.getKey())
                          .append("\": ");
 
@@ -108,76 +108,30 @@ public class DataSerializer {
                    jsonBuilder.append("null");
                } else if (value instanceof String) {
                    jsonBuilder.append("\"")
-                             .append(escapeJsonString(value.toString()))
+                             .append(value.toString())
                              .append("\"");
                } else if (value instanceof Number || value instanceof Boolean) {
                    jsonBuilder.append(value);
                } else {
                    // Для других типов преобразуем в строку
                    jsonBuilder.append("\"")
-                             .append(escapeJsonString(value.toString()))
+                             .append(value.toString())
                              .append("\"");
                }
 
                if (++entryIndex < row.size()) {
                    jsonBuilder.append(",");
                }
-               jsonBuilder.append("\n");
            }
 
-           jsonBuilder.append("  }");
+           jsonBuilder.append("}");
            if (i < list.size() - 1) {
                jsonBuilder.append(",");
            }
-           jsonBuilder.append("\n");
        }
 
        jsonBuilder.append("]");
        return jsonBuilder.toString();
-   }
-
-   /**
-    * Экранирует специальные символы в строке для JSON
-    * @param input входная строка
-    * @return экранированная строка
-    */
-   private static String escapeJsonString(String input) {
-       if (input == null) {
-           return "";
-       }
-
-       StringBuilder sb = new StringBuilder();
-       for (char c : input.toCharArray()) {
-           switch (c) {
-               case '\"':
-                   sb.append("\\\"");
-                   break;
-               case '\\':
-                   sb.append("\\\\");
-                   break;
-               case '/':
-                   sb.append("\\/");
-                   break;
-               case '\b':
-                   sb.append("\\b");
-                   break;
-               case '\f':
-                   sb.append("\\f");
-                   break;
-               case '\n':
-                   sb.append("\\n");
-                   break;
-               case '\r':
-                   sb.append("\\r");
-                   break;
-               case '\t':
-                   sb.append("\\t");
-                   break;
-               default:
-                   sb.append(c);
-           }
-       }
-       return sb.toString();
    }
 
    /**

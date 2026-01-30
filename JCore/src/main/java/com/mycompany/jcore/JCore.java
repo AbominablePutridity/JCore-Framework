@@ -74,5 +74,12 @@ public class JCore {
         server.controllerPull.declaredControllers.add(new PersonController(ContainerDI.getBean(Statement.class)));
         
         server.startServer(); //запускаем сервер
+        
+        /*
+        Настройки для PuTTY (по умолчанию, для тестирования роутов):
+        1) Host name (or IP address) - 127.0.0.1 Port - 8082 - по умолчанию
+        2) Connection type - Other -> Raw
+        3) Close window on exit - Never
+        */
     }
 }
