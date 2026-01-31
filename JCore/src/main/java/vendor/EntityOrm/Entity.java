@@ -90,7 +90,7 @@ public abstract class Entity {
                 sql += "\n\t" + "FOREIGN KEY(" + 
                         entityInfo.refs.get(i).refClass.getSimpleName().substring(0, 1).toLowerCase() + entityInfo.refs.get(i).refClass.getSimpleName().substring(1) + "Id" + 
                         ") REFERENCES " + entityInfo.refs.get(i).refClass.getSimpleName() +
-                        "(id)";
+                        "(id) ON DELETE CASCADE";
                 
                 if(i != entityInfo.refs.size() - 1) {
                     sql += ", ";
