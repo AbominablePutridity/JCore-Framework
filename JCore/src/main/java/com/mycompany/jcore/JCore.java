@@ -15,6 +15,7 @@ import vendor.DI.ConfigDI;
 import vendor.DI.ContainerDI;
 import vendor.EntityOrm.ConfigJDBC;
 import vendor.JCoreMeta;
+import vendor.Security.Security;
 
 /**
  *
@@ -47,7 +48,7 @@ public class JCore {
             person1.name = "Иван";
             person1.surname = "Иванов";
             person1.login = "ivanov";
-            person1.password = "pass";
+            person1.password = Security.hashPassword("pass"); // хешируем наш пароль "pass" перед тем как положить его в базу данных
             person1.role = "USER";
 
             //вызываем метод setData() и передаем данные в виде обьекта для создания записи в базе данных.

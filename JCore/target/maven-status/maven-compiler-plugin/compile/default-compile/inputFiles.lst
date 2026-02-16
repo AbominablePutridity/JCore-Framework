@@ -9,6 +9,7 @@ D:\Java\JCore\src\main\java\vendor\ControllerComponent\Controller.java
 D:\Java\JCore\src\main\java\vendor\DI\ConfigDI.java
 D:\Java\JCore\src\main\java\vendor\DI\ContainerDI.java
 D:\Java\JCore\src\main\java\vendor\EntityOrm\ConfigJDBC.java
+D:\Java\JCore\src\main\java\vendor\EntityOrm\DataSerializer.java
 D:\Java\JCore\src\main\java\vendor\EntityOrm\Entity.java
 D:\Java\JCore\src\main\java\vendor\EntityOrm\EntityInfo.java
 D:\Java\JCore\src\main\java\vendor\EntityOrm\FieldNameWithType.java

@@ -1,3 +1,4 @@
+vendor\EntityOrm\DataSerializer.class
 vendor\EntityOrm\Entity.class
 vendor\JCoreMeta.class
 com\mycompany\jcore\repository\CarRepository.class

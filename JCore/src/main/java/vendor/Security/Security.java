@@ -1,5 +1,6 @@
 package vendor.Security;
 
+import at.favre.lib.crypto.bcrypt.BCrypt;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -41,27 +42,33 @@ public class Security {
         String[] clientLoginAndPasswordByQuery = extractLoginAndPasswordFromClientQuery(clientParams);
         
         try {
-            // Используем параметризованный запрос с ? вместо конкатенации строк, выполняем запрос
-            ResultSet resultSet = Entity.executeSQL(
-                "SELECT " + roleField + " FROM " + tableName + 
-                " WHERE " + loginField + " = ?" + 
-                " AND " + passwordField + " = ?",
+            // берем по логину пользователя его хешированный пароль и роль одним запросом
+            ResultSet passwordResultSet = Entity.executeSQL(
+                "SELECT " + passwordField + ", " + roleField + " FROM " + tableName + 
+                " WHERE " + loginField + " = ? LIMIT 1",
                 new Object[]
                 {
-                    clientLoginAndPasswordByQuery[0],
-                    clientLoginAndPasswordByQuery[1]
+                    clientLoginAndPasswordByQuery[0]
                 }    
             );
             
-            // Если есть результат, берем роль и сравниваем ее с той ролью, которая нам нужна
-            if (resultSet.next()) {
-                if(resultSet.getString(roleField).equals(roleForChecking)) {
-                    return true;
-                }
-            }
+            // Если есть результат, берем роль и пароль сравниваем ее с той ролью, которая нам нужна
+            if (passwordResultSet.next()) {
+                
+                String storedHash = passwordResultSet.getString(passwordField); // хешированный пароль из Базы Данных
+                String actualRole = passwordResultSet.getString(roleField); // роль из Базы Данных
+                
+                boolean isCheckedPassword = checkHashedPassword(storedHash, clientLoginAndPasswordByQuery[1]); // проверка на соответствие паролей
             
-            // Закрываем ResultSet
-            resultSet.close();
+                if(isCheckedPassword) {
+                    if(actualRole.equals(roleForChecking)) { // проверка на соответствие ролей из Базы Данных
+                        return true;
+                    }
+                }
+            
+                // Закрываем ResultSet
+                passwordResultSet.close();
+            }
             
         } catch (SQLException e) {
             System.err.println("Ошибка при выполнении SQL-запроса: " + e.getMessage());
@@ -100,5 +107,33 @@ public class Security {
         }
         
         return loginAndPass;
+    }
+    
+    /**
+     * Захешировать пароль пользователя
+     * @param password пароль, вводимый пользователем
+     * @return захешированный пароль
+     */
+    public static String hashPassword(String password) {
+        String hashedPassword = BCrypt.withDefaults().hashToString(12, password.toCharArray());
+        
+        System.out.println("\n \t HASHED_PASSWORD = " + hashedPassword + " \n");
+        
+        return hashedPassword;
+    }
+    
+    /**
+     * Сравнить хеш пароля с самим паролем
+     * @param cryptedPassword хешированный пароль
+     * @param password пароль без хеша
+     * @return true - если пароли совпадают, иначе false
+     */
+    public static boolean checkHashedPassword(String cryptedPassword, String password) {
+        BCrypt.Result result = BCrypt.verifyer()
+                .verify(password.toCharArray(), cryptedPassword);
+        
+        System.out.println("\n \t PASSWORD_IS_VERIFIED = " + String.valueOf(result.verified) + " \n");
+        
+        return result.verified;
     }
 }

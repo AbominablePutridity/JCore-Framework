@@ -18,5 +18,13 @@
             <version>42.7.9</version>
             <scope>compile</scope>
         </dependency>
+        
+        <!-- Для хеширования пароля -->
+        <dependency>
+            <groupId>at.favre.lib</groupId>
+            <artifactId>bcrypt</artifactId>
+            <version>0.10.2</version>
+            <scope>compile</scope>
+        </dependency>
     </dependencies>
 </project>
