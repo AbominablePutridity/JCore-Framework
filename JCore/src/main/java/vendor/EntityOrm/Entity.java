@@ -73,7 +73,7 @@ public abstract class Entity {
             
             //перебираем поля
             for(int i = 0; i < entityInfo.entityFields.length; i++) {
-                sql += "\n\t" + entityInfo.entityFields[i].fieldName + " " + convertTypeToSqlType(entityInfo.entityFields[i], null);
+                sql += "\n\t" + entityInfo.entityFields[i].fieldName + " " + convertTypeToSqlType(entityInfo.entityFields[i], 0L);
                 
                 if(i != entityInfo.entityFields.length - 1) {
                     sql += ", ";
