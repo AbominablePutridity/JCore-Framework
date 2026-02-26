@@ -5,14 +5,27 @@ import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Scanner;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import vendor.ControllerComponent.Controller;
 import vendor.JCoreMeta;
 
 /**
- *
+ * От 26.02.26:
+ * 
+ * Чистая архитектура - один класс, всё в одном файле
+ * Простая очередь - BlockingQueue идеально подходит
+ * Потоки-воркеры - 4 потока крутятся в бесконечном цикле и берут задачи из очереди
+ * Основной поток только принимает подключения и кладет в очередь - не блокируется
+ * Метод handleClient остался без изменений - вся логика обработки сохранилась
+ * 
  * @author User
  */
 public class Server {
+    // Пул из 4 потоков для обработки клиентов
+    private static final int THREAD_POOL_SIZE = 4;
+    private BlockingQueue<Socket> queue = new LinkedBlockingQueue<>(); // очередь со всеми сокетными подключениями клиентов
+    
     private int port;
     public Controller controllerPull; //обьект, обрабатывающий маршрутизацию контроллеров
     
@@ -21,19 +34,33 @@ public class Server {
         this.port = port;
     }
     
-    public void startServer() throws IOException {        
+    public void startServer() throws IOException, InterruptedException {        
         ServerSocket serverSocket = new ServerSocket(port); //серверный сокет
         
         JCoreMeta.logoRenderer(); //вывод ASCII логотипа фреймворка в консоль
         
         System.out.println("Сервер запущен на порту: " + port);
         
-        // Бесконечный цикл в одном потоке
+        // Запускаем 4 рабочих потока
+        for (int i = 0; i < THREAD_POOL_SIZE; i++) {
+            new Thread(() -> { // создаем поток (по циклу - 4 раза)
+                while (true) {
+                    try {
+                        Socket client = queue.take(); // берем из очереди сокет с запросом клиента
+                        handleClient(client); // вызываем метод обработки клиентского сокета сервером
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }).start();
+        }
+        
+        // Основной поток принимает подключения
         while (true) {
             Socket clientSocket = serverSocket.accept(); // принимаем подключение
             
-            // Обрабатываем клиента в том же потоке
-            handleClient(clientSocket);
+            // Кладем новый сокет с запросом клиента в общую очередь на обработку одному из 4х потоков
+            queue.put(clientSocket);
         }
     }
     
