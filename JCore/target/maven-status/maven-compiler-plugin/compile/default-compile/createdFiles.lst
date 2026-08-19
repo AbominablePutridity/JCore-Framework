@@ -10,6 +10,8 @@ com\mycompany\jcore\entities\Car.class
 vendor\EntityOrm\FieldNameWithType.class
 com\mycompany\jcore\controller\PersonController.class
 com\mycompany\jcore\repository\PersonRepository.class
+com\mycompany\jcore\client\FileClient.class
+vendor\ControllerComponent\Connection\Server$ClientRequest.class
 com\mycompany\jcore\entities\Person.class
 vendor\EntityOrm\RelationField.class
 vendor\Security\Security.class
