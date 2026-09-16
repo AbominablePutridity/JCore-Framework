@@ -3,6 +3,7 @@ package vendor.ControllerComponent;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+import vendor.ControllerComponent.Connection.FileChunk;
 
 /**
  *
@@ -24,7 +25,7 @@ public class Controller {
     public Object startMethodByUrl(
             String resultUrl,
             String[] params,
-            byte[][] binaryFiles
+            FileChunk[] binaryFiles
     ) {
 
         String[] parts = resultUrl.split("/");
@@ -40,7 +41,7 @@ public class Controller {
                             .getMethod(
                                     parts[1],
                                     String[].class,
-                                    byte[][].class
+                                    FileChunk[].class
                             );
 
                     // Вызываем метод контроллера

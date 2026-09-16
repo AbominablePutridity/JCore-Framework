@@ -346,9 +346,10 @@ public class JCore {
 ```java
 package com.mycompany.jcore.controller;
 
-import java.io.FileOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.sql.Statement;
+import vendor.ControllerComponent.Connection.FileChunk;
 import vendor.Security.Security;
 
 /**
@@ -362,7 +363,7 @@ public class PersonController {
     */
     public String createPersonAction(
             String[] params,
-            byte[][] binaryFiles
+            FileChunk[] binaryFiles
     ) throws IOException {
 
         String result = "";
@@ -373,22 +374,26 @@ public class PersonController {
         }
 
         // Обработка полученных бинарных файлов
+        // Каждый элемент binaryFiles - ОДИН файл как цепочка кусков FileChunk
+        // (файлы в v0.0.2 больше не передаются одним массивом байт - это позволяет
+        //  передавать файлы любого размера, в т.ч. больше 2ГБ)
         for (int i = 0; i < binaryFiles.length; i++) {
 
-            byte[] file = binaryFiles[i];
+            FileChunk fileHead = binaryFiles[i];
 
             System.out.println(
                 "Получен файл #" + i +
-                ", размер: " + file.length + " байт"
+                ", кусков: " + fileHead.chunkCount() +
+                ", размер: " + fileHead.totalSize() + " байт"
             );
 
-            // пример: конвертируем полученные байты обратно в файл на диске
-            try (FileOutputStream output =
-                    new FileOutputStream("photo.jpg")) {
-                output.write(file);
-            }
+            // пример: собираем куски в файл на диске.
+            // mergeAll сам записывает все куски последовательно (не в один массив!),
+            // файл создаётся в temp-директории, затем переносим его в рабочую папку.
+            File targetFile = new File("photo_" + i + ".jpg");
+            FileChunk.mergeAll(fileHead, "jpg").renameTo(targetFile);
 
-            result += "file #" + i + " size -> " + file.length + "\r\n";
+            result += "file #" + i + " size -> " + fileHead.totalSize() + "\r\n";
         }
 
         return result;
@@ -399,7 +404,7 @@ public class PersonController {
 - Здесь очень важно правильно назвать класс-контроллер и его методы (экшены), ведь из них складывается строка к доступу (роуту) для выполнения метода.
 Метод контроллера ОБЯЗАТЕЛЬНО должен принимать два параметра:
 - String[] params - переданные параметры от клиента в строке запроса от него (request).
-- byte[][] binaryFiles - массив бинарных файлов, переданных клиентом (каждый файл представляется как массив байтов byte[]). Если файлы не передавались - массив будет пустым.
+- FileChunk[] binaryFiles - массив бинарных файлов, переданных клиентом (каждый файл представляется как цепочка кусков FileChunk; пусть вас не смущает название параметра binaryFiles - оно сохранено, но тип в v0.0.2 изменён с byte[][] на FileChunk[]). Если файлы не передавались - массив будет пустым.
 
 Отлично, мы написали класс-контроллер с примером вывода в консоль всех переданных параметров клиента, обработки переданных бинарных файлов и возвращением результата с сервера обратно клиенту как ответ сервера (response).
 
@@ -422,18 +427,24 @@ public class PersonController {
 
 - данные параметров в запросе клиента может быть сколько угодно.
 
-Бинарная часть запроса идет сразу после текстовой и начинается с маркера &lt;BINARY&gt;. Каждый файл передается в следующем формате:
+Бинарная часть запроса идет сразу после текстовой и начинается с маркера &lt;BINARY&gt;.
+В v0.0.2 файлы передаются **кусками** (транспортный контейнер FileChunk) - это позволяет
+передавать файлы любого размера (в v0.0.1 один файл = один массив байт, что ограничивало
+размер ~2ГБ). Формат одного куска:
 
 ```text
-[4 байта - размер файла в байтах][содержимое файла]
+[1 байт - флаг продолжения (1 = у файла будут ещё куски, 0 - последний кусок)][4 байта - длина куска][содержимое куска]
 ```
 
-Файлы передаются последовательно, один за другим. Список файлов завершается значением размера равным 0 (int со значением 0). Если бинаральная часть не нужна, можно отправлять только текстовую часть без маркера &lt;BINARY&gt;.
+Один файл может состоять из одного или нескольких таких кусков (цепочка). Файлы передаются
+последовательно, один за другим. Список файлов завершается "пустым куском": флаг 0 + длина 0
+(int со значением 0). Если бинаральная часть не нужна, можно отправлять только текстовую часть
+без маркера &lt;BINARY&gt;.
 
-Полный формат запроса с файлами:
+Полный формат запроса с файлами (пример: один файл из одного куска):
 
 ```text
-"PersonController/createPersonAction<endl>helloWorld!<endl>JCore!<endl><BINARY>[4 байта размер][содержимое файла][int 0]"
+"PersonController/createPersonAction<endl>helloWorld!<endl>JCore!<endl><BINARY>[флаг 0][4 байта длина куска][содержимое файла][0][длина 0]"
 ```
 
 Ответ от сервера принимается в формате строки.
@@ -482,15 +493,16 @@ public static void main(String[] args) {
 Где PersonController/createPersonAction - имя роута, которое парсится по символу "/", извлекается имя класса и ищется в коллекции declaredControllers<>.
 Если обьект класса присутствует в коллекции, у него вызывается метод в роуте, идущий после символа "/".
 
-после определения роута, строка запроса парсится по делиметру строки "&lt;endl&gt;", и все параметры, идущие после роута, передаются в сигнатуру запускающего метода, в параметр String[] params - в нашем случае: createPersonAction(String[] params, byte[][] binaryFiles)
+после определения роута, строка запроса парсится по делиметру строки "&lt;endl&gt;", и все параметры, идущие после роута, передаются в сигнатуру запускающего метода, в параметр String[] params - в нашем случае: createPersonAction(String[] params, FileChunk[] binaryFiles)
 
 Если после текстовой части запроса идет маркер &lt;BINARY&gt;, сервер начинает читать бинарные файлы из тела запроса.
-Каждый файл передается в формате: 4 байта (int) - размер файла, затем N байт - содержимое файла.
-Список файлов завершается значением размера равным 0.
-Пример запроса с передачей файла в формате jpg:
+Каждый кусок файла передается в формате: 1 байт (флаг продолжения) + 4 байта (int) - длина куска, затем N байт - содержимое куска.
+Куски одного файла связываются сервером в цепочку FileChunk (склейка в файл - задача контроллера через FileChunk.mergeAll).
+Список файлов завершается "пустым куском": флаг 0 + длина равная 0.
+Пример запроса с передачей файла в формате jpg (цепочка из одного куска):
 
 ```text
-"PersonController/createPersonAction<endl>upload_photo<endl><BINARY>[4 байта размера][содержимое jpg файла][int 0]"
+"PersonController/createPersonAction<endl>upload_photo<endl><BINARY>[флаг 0][4 байта длина куска][содержимое jpg файла][0][длина 0]"
 ```
 
 
@@ -533,6 +545,7 @@ public class Person extends Entity {
 package com.mycompany.jcore.controller;
 
 import java.sql.Statement;
+import vendor.ControllerComponent.Connection.FileChunk;
 import vendor.Security.Security;
 
 /**
@@ -548,7 +561,7 @@ public class PersonController extends Security { //наследуемся от �
     /* telnet 127.0.0.1 8082
     запрос (через коммандную строку): PersonController/createPersonAction<endl>helloWorld!<endl>JCore!<endl>ivanov<security>;pass<endl>
     */
-    public String createPersonAction(String[] params)
+    public String createPersonAction(String[] params, FileChunk[] binaryFiles)
     {
         String result = ""; //строка с ответом от сервера, которую будем возвращать клиенту.
         

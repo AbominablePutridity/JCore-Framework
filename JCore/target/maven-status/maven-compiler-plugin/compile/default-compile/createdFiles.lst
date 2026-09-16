@@ -2,6 +2,7 @@ vendor\EntityOrm\DataSerializer.class
 vendor\EntityOrm\Entity.class
 vendor\JCoreMeta.class
 com\mycompany\jcore\repository\CarRepository.class
+vendor\ControllerComponent\Connection\FileChunk.class
 vendor\EntityOrm\EntityInfo.class
 vendor\EntityOrm\Repository.class
 vendor\DI\ConfigDI.class
