@@ -346,65 +346,52 @@ public class JCore {
 ```java
 package com.mycompany.jcore.controller;
 
-import java.io.File;
 import java.io.IOException;
 import java.sql.Statement;
-import vendor.ControllerComponent.Connection.FileChunk;
+import vendor.ControllerComponent.Connection.Exchange.ClientRequest;
+import vendor.ControllerComponent.Connection.Exchange.Data;
+import vendor.ControllerComponent.Connection.Exchange.ServerResponse;
 import vendor.Security.Security;
 
 /**
  * Пример контроллера с выводом переданных параметров клиенту.
  * @author User
  */
-public class PersonController {
-    
+public class PersonController extends Security {
+
+    public PersonController(Statement statement) {
+        super(statement);
+    }
+
     /* telnet 127.0.0.1 8082
     запрос (через коммандную строку): PersonController/createPersonAction<endl>helloWorld!<endl>JCore!<endl>
     */
-    public String createPersonAction(
-            String[] params,
-            FileChunk[] binaryFiles
+    public ServerResponse createPersonAction(
+            ClientRequest request
     ) throws IOException {
 
-        String result = "";
+        // 1) выводим параметры запроса и пути к переданным файлам
+        StringBuilder result = new StringBuilder();
+        result.append(request.getData().showParams());
+        result.append(request.getData().showFiles());
 
-        for (String param : params) {
-            result += "param is -> " + param + "\r\n";
-            System.out.println("param is -> " + param);
-        }
+        // 2) упаковываем результат в ответ-пакет ServerResponse
+        ServerResponse response = new ServerResponse();
+        Data dataToResponse = new Data();
+        dataToResponse.setParams(request.getData().getParams());
+        response.setData(dataToResponse);
 
-        // Обработка полученных бинарных файлов
-        // Каждый элемент binaryFiles - ОДИН файл как цепочка кусков FileChunk
-        // (файлы в v0.0.2 больше не передаются одним массивом байт - это позволяет
-        //  передавать файлы любого размера, в т.ч. больше 2ГБ)
-        for (int i = 0; i < binaryFiles.length; i++) {
-
-            FileChunk fileHead = binaryFiles[i];
-
-            System.out.println(
-                "Получен файл #" + i +
-                ", кусков: " + fileHead.chunkCount() +
-                ", размер: " + fileHead.totalSize() + " байт"
-            );
-
-            // пример: собираем куски в файл на диске.
-            // mergeAll сам записывает все куски последовательно (не в один массив!),
-            // файл создаётся в temp-директории, затем переносим его в рабочую папку.
-            File targetFile = new File("photo_" + i + ".jpg");
-            FileChunk.mergeAll(fileHead, "jpg").renameTo(targetFile);
-
-            result += "file #" + i + " size -> " + fileHead.totalSize() + "\r\n";
-        }
-
-        return result;
+        return response;
     }
 }
 ```
 
 - Здесь очень важно правильно назвать класс-контроллер и его методы (экшены), ведь из них складывается строка к доступу (роуту) для выполнения метода.
-Метод контроллера ОБЯЗАТЕЛЬНО должен принимать два параметра:
-- String[] params - переданные параметры от клиента в строке запроса от него (request).
-- FileChunk[] binaryFiles - массив бинарных файлов, переданных клиентом (каждый файл представляется как цепочка кусков FileChunk; пусть вас не смущает название параметра binaryFiles - оно сохранено, но тип в v0.0.2 изменён с byte[][] на FileChunk[]). Если файлы не передавались - массив будет пустым.
+Метод контроллера ОБЯЗАТЕЛЬНО должен принимать один параметр:
+- `ClientRequest request` - весь клиентский запрос целиком (обьект класса `ClientRequest` из пакета `vendor.ControllerComponent.Connection.Exchange`). Из него достаются данные:
+  - `request.getData().getParams()` - `String[] params` - переданные параметры от клиента в строке запроса от него (request);
+  - `request.getData().getBinaryFiles()` - `File[] binaryFiles` - массив путей к бинарным файлам, переданным клиентом и уже сохранённым сервером на диске (в папке `uploads/`). В v0.0.3 это ссылки на файлы (~100 байт в памяти), а не сами данные - файлы пишутся на диск стримингово. Если файлы не передавались - массив будет пустым (не null).
+- Метод обязан возвращать обьект **`ServerResponse`** (см. описание ниже). Возврат чего-либо другого (строки, null) сервер не принимает: он закрывает соединение без ответа.
 
 Отлично, мы написали класс-контроллер с примером вывода в консоль всех переданных параметров клиента, обработки переданных бинарных файлов и возвращением результата с сервера обратно клиенту как ответ сервера (response).
 
@@ -428,7 +415,7 @@ public class PersonController {
 - данные параметров в запросе клиента может быть сколько угодно.
 
 Бинарная часть запроса идет сразу после текстовой и начинается с маркера &lt;BINARY&gt;.
-В v0.0.2 файлы передаются **кусками** (транспортный контейнер FileChunk) - это позволяет
+В v0.0.3 файлы передаются **кусками** (стримингово) - это позволяет
 передавать файлы любого размера (в v0.0.1 один файл = один массив байт, что ограничивало
 размер ~2ГБ). Формат одного куска:
 
@@ -436,10 +423,12 @@ public class PersonController {
 [1 байт - флаг продолжения (1 = у файла будут ещё куски, 0 - последний кусок)][4 байта - длина куска][содержимое куска]
 ```
 
-Один файл может состоять из одного или нескольких таких кусков (цепочка). Файлы передаются
-последовательно, один за другим. Список файлов завершается "пустым куском": флаг 0 + длина 0
+Размер одного куска НЕ должен превышать 64 МБ (константа `Server.MAX_CHUNK_SIZE`);
+при превышении сервер разрывает соединение с ошибкой "Слишком большой кусок". Один файл может
+состоять из одного или нескольких таких кусков. Файлы передаются последовательно, один за другим.
+Список файлов завершается "пустым куском": флаг 0 + длина 0
 (int со значением 0). Если бинаральная часть не нужна, можно отправлять только текстовую часть
-без маркера &lt;BINARY&gt;.
+без маркера &lt;BINARY&gt; (сервер передаст в запрос пустой массив файлов).
 
 Полный формат запроса с файлами (пример: один файл из одного куска):
 
@@ -447,12 +436,16 @@ public class PersonController {
 "PersonController/createPersonAction<endl>helloWorld!<endl>JCore!<endl><BINARY>[флаг 0][4 байта длина куска][содержимое файла][0][длина 0]"
 ```
 
-Ответ от сервера принимается в формате строки.
+Ответ от сервера - уже НЕ просто строка, а обьект-пакет **`ServerResponse`** (структура класса -
+см. ниже). Внутри него также находится универсальный контейнер данных **`Data`**, который может
+содержать как текстовые параметры (`String[] params`), так и бинарные файлы (`File[] binaryFiles`).
+На провод ответ сериализуется ТЕМ ЖЕ фреймингом, что и запрос: текстовая часть
+(`параметр1<endl>параметр2<endl>...<endl><BINARY>` - маркер дописывается всегда),
+затем файлы кусками, в конце - терминатор `[0][длина 0]`. Демонстрационный клиент
+`FileClientPusher` читает поток ответа до EOF "как есть" (для текстовых ответов это просто строка).
 
-(Все современные браузеры получают данные в формате строки, которая в свою очередь парсится и преобразоввывается сериализатором обратно в обьект,
-а ответ - обработанные данные, которые в свою очередь также представляются в виде строки, которую должна быт распаршена на клиентской части для извлечения и отрисовки данных,
-поэтому был выбран такой архитектурный прием в виде строки-запроса, данные которой парсятся в массив параметров в данном фреймворке и строки-ответа,
-которая, в свою очередь, должна быть распаршена на стороне клиента).
+Текстовая часть запроса парсится в массив параметров на сервере, а результат контроллер
+упаковывает в JSON-строку в `params[0]` ответа - её клиентская часть парсит и отрисовывает данные.
 
 Очень важный момент - сервер имеет в себе обьект Controller, который хранит в себе все роуты для отправки в них запросов на клиенте (об этом подробнее чуть позже).
 
@@ -467,7 +460,7 @@ public static void main(String[] args) {
         Server server = ContainerDI.getBean(Server.class); //берем бин сервера из DI-контейнера (2)
         
         // регестрируем все наши контроллеры на сервере (для роутинга) (3)
-        server.controllerPull.declaredControllers.add(new PersonController());
+        server.controllerPull.declaredControllers.add(new PersonController(ContainerDI.getBean(Statement.class)));
         
         server.startServer(); //запускаем сервер (4)
 }
@@ -484,7 +477,7 @@ public static void main(String[] args) {
 Как работает роутинг?
 
 При подключении по Сокетному соединению клиента (telnet [IP-адресс (локально - 127.0.0.1)] [порт (по умолчанию - 8082)])
-или при помощи программного клиента (класс FileClient), можно будет отправить запрос в следующем формате:
+или при помощи программного клиента (класс FileClientPusher), можно будет отправить запрос в следующем формате:
 
 ```text
 "PersonController/createPersonAction<endl>helloWorld!<endl>JCore!<endl>"
@@ -493,13 +486,13 @@ public static void main(String[] args) {
 Где PersonController/createPersonAction - имя роута, которое парсится по символу "/", извлекается имя класса и ищется в коллекции declaredControllers<>.
 Если обьект класса присутствует в коллекции, у него вызывается метод в роуте, идущий после символа "/".
 
-после определения роута, строка запроса парсится по делиметру строки "&lt;endl&gt;", и все параметры, идущие после роута, передаются в сигнатуру запускающего метода, в параметр String[] params - в нашем случае: createPersonAction(String[] params, FileChunk[] binaryFiles)
+После определения роута, строка запроса парсится по делиметру строки "&lt;endl&gt;", и все параметры, идущие после роута, упаковываются сервером в обьект клиентского запроса **ClientRequest** (`request.getData().getParams()`) - в нашем случае: createPersonAction(ClientRequest request).
 
 Если после текстовой части запроса идет маркер &lt;BINARY&gt;, сервер начинает читать бинарные файлы из тела запроса.
 Каждый кусок файла передается в формате: 1 байт (флаг продолжения) + 4 байта (int) - длина куска, затем N байт - содержимое куска.
-Куски одного файла связываются сервером в цепочку FileChunk (склейка в файл - задача контроллера через FileChunk.mergeAll).
-Список файлов завершается "пустым куском": флаг 0 + длина равная 0.
-Пример запроса с передачей файла в формате jpg (цепочка из одного куска):
+В v0.0.3 сервер пишет куски каждого файла на диск **сразу по мере приёма** (стриминг, кусок ≤ 64 МБ) в папку `uploads/`, а в запрос кладёт массив путей `File[]` (`request.getData().getBinaryFiles()`) - склейки кусков в памяти (и класса FileChunk) больше нет.
+Список файлов завершается "пустым куском": флаг 0 + длина равная 0. Пустые файлы (0 байт) пропускаются (совпадают с терминатором).
+Пример запроса с передачей файла в формате jpg (один кусок):
 
 ```text
 "PersonController/createPersonAction<endl>upload_photo<endl><BINARY>[флаг 0][4 байта длина куска][содержимое jpg файла][0][длина 0]"
@@ -545,7 +538,9 @@ public class Person extends Entity {
 package com.mycompany.jcore.controller;
 
 import java.sql.Statement;
-import vendor.ControllerComponent.Connection.FileChunk;
+import vendor.ControllerComponent.Connection.Exchange.ClientRequest;
+import vendor.ControllerComponent.Connection.Exchange.Data;
+import vendor.ControllerComponent.Connection.Exchange.ServerResponse;
 import vendor.Security.Security;
 
 /**
@@ -559,14 +554,15 @@ public class PersonController extends Security { //наследуемся от �
     }
     
     /* telnet 127.0.0.1 8082
-    запрос (через коммандную строку): PersonController/createPersonAction<endl>helloWorld!<endl>JCore!<endl>ivanov<security>;pass<endl>
+    запрос (через коммандную строку): PersonController/createPersonAction<endl>helloWorld!<endl>JCore!<endl>ivanov<security>pass<endl>
     */
-    public String createPersonAction(String[] params, FileChunk[] binaryFiles)
+    public ServerResponse createPersonAction(ClientRequest request)
     {
-        String result = ""; //строка с ответом от сервера, которую будем возвращать клиенту.
-        
+        String[] params = request.getData().getParams(); //параметры запроса клиента
+
 	//([из какой таблицы], [имя поля логина в таблице], [имя поля пароля в таблице], [имя поля роли в таблице], [Имя роли, которой можно выполнять запрос], [параметры запроса])
         if(super.checkRole("Person", "login", "password", "role", "USER", params)) { //проверка пользователя (Security-модуль)   
+            String result = ""; //строка с ответом от сервера, которую будем возвращать клиенту.
             for(String param : params)
             {
 		// если логин и пароль из запроса совпадут со значениями из БД, и роль найденого пользователя будет равна (в нашем случае "USER")
@@ -574,11 +570,21 @@ public class PersonController extends Security { //наследуемся от �
                 result += "param is -> " + param + "\r\n";
                 System.out.println("param is -> " + param);
             }
-            
-            return result;
+
+	    //упаковываем результат в ответ-пакет ServerResponse
+            ServerResponse response = new ServerResponse();
+            Data dataToResponse = new Data();
+            dataToResponse.setParams(new String[]{result});
+            response.setData(dataToResponse);
+            return response;
         } else {
 	    //иначе выведит ошибку доступа.
-            return super.returnException();
+	    //ВНИМАНИЕ: super.returnException() возвращает String, поэтому оборачиваем её в ServerResponse
+            ServerResponse denied = new ServerResponse();
+            Data deniedData = new Data();
+            deniedData.setParams(new String[]{super.returnException()}); //ACCESS_DENIED
+            denied.setData(deniedData);
+            return denied;
         }
     }
 }

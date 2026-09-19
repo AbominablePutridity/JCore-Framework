@@ -1,9 +1,10 @@
 package vendor.ControllerComponent;
 
+import java.io.File;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
-import vendor.ControllerComponent.Connection.FileChunk;
+import vendor.ControllerComponent.Connection.Exchange.ClientRequest;
 
 /**
  *
@@ -17,22 +18,20 @@ public class Controller {
     /**
      * Запускает метод класса, взятый из resultUrl через рефлексию.
      *
-     * @param resultUrl Строка в формате "Класс/методДляЗапуска".
-     * @param params Текстовые параметры запроса.
-     * @param binaryFiles Бинарные файлы запроса.
-     * @return Результат обработки метода контроллера.
+     * @param request Запрос с данными от клиента.
      */
     public Object startMethodByUrl(
-            String resultUrl,
-            String[] params,
-            FileChunk[] binaryFiles
+        ClientRequest request
     ) {
 
-        String[] parts = resultUrl.split("/");
+        String[] parts = request.getPartsByRoute();
 
         for (Object controller : declaredControllers) {
 
-            if (controller.getClass().getSimpleName().equals(parts[0])) {
+            if (controller.getClass().getSimpleName().equals(
+                    parts[0]
+                )
+            ) {
 
                 try {
 
@@ -40,26 +39,28 @@ public class Controller {
                             .getClass()
                             .getMethod(
                                     parts[1],
-                                    String[].class,
-                                    FileChunk[].class
+                                    ClientRequest.class
                             );
 
-                    // Вызываем метод контроллера
-                    Object result = method.invoke(
+                    return method.invoke(
                             controller,
-                            params,
-                            binaryFiles
+                            request
                     );
 
-                    return result;
+                } catch (java.lang.reflect.InvocationTargetException e) {
+                    // Настоящая причина — внутри e.getCause()
+                    System.out.println("CONTROLLER ERROR, real cause:");
+                    Throwable cause = e.getCause();
+                    if (cause != null) {
+                        cause.printStackTrace();
+                    } else {
+                        e.printStackTrace();
+                    }
+                    return null;
 
                 } catch (Exception e) {
-
-                    System.out.println(
-                            "CONTROLLER ERROR: " +
-                            e.getMessage()
-                    );
-
+                    System.out.println("CONTROLLER ERROR:");
+                    e.printStackTrace();
                     return null;
                 }
             }

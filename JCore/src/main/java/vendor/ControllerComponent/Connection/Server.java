@@ -2,50 +2,59 @@ package vendor.ControllerComponent.Connection;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import vendor.ControllerComponent.Controller;
 import vendor.JCoreMeta;
+import java.util.UUID;
+import vendor.ControllerComponent.Connection.Exchange.ClientRequest;
+import vendor.ControllerComponent.Connection.Exchange.Data;
+import vendor.ControllerComponent.Connection.Exchange.ServerResponse;
 
 /**
  * Серверная часть фреймворка.
  *
- * Что изменилось по сравнению с предыдущей версией:
- *
- *  1. Тип бинарных данных в запросе изменён с {@code byte[][]} на {@code FileChunk[]}.
- *     Теперь каждый "файл" в запросе — это не один byte[], а цепочка кусков,
- *     потому что физически один byte[] не может содержать файл >2ГБ.
- *
- *  2. Метод чтения бинарной части больше НЕ склеивает куски в один массив.
- *     Он строит односвязный список {@link FileChunk} по мере поступления кусков
- *     из сокета. Склейка — ответственность контроллера (см. FileChunk.mergeAll).
- *
- *  3. Формат каждого куска на проводе теперь содержит дополнительный байт-флаг
- *     "есть ли продолжение" перед 4-байтовым размером:
- *
- *         [1 байт: флаг продолжения (1 = есть следующий кусок, 0 = последний)]
- *         [4 байта: длина этого куска]
- *         [N байт: данные куска]
- *
- *     Это позволяет отличать "продолжение того же файла" от "начало нового файла"
- *     и корректно обрабатывать несколько файлов в одном запросе.
- *
- *  4. Появился вспомогательный метод {@code readOneFile}, который читает
- *     ровно один файл (одну цепочку кусков) из потока.
- *
- * Что осталось без изменений:
+ * Логика приёма подключений и разбора текстовой части запроса не менялась:
  *  - пул из 4 потоков и BlockingQueue;
- *  - разбор текстовой части до маркера <BINARY>;
+ *  - разбор текстовой части до маркера {@code <BINARY>};
  *  - формат маршрута и параметров (route<endl>param1<endl>param2<endl><BINARY>);
  *  - отправка ответа клиенту.
+ *
+ * Изменилась только обработка бинарной части запроса:
+ *
+ *  1. Куски файлов больше НЕ собираются в цепочку в памяти.
+ *     Раньше сервер строил односвязный список FileChunk и передавал его
+ *     контроллеру целиком. Это приводило к тому, что весь файл (а при
+ *     нескольких файлах — все файлы сразу) оказывался в heap.
+ *
+ *  2. Теперь каждый кусок пишется на диск СРАЗУ после чтения из сокета.
+ *     В памяти в каждый момент находится только ОДИН кусок, независимо
+ *     от размера файла и их количества в запросе.
+ *
+ *  3. Контроллер получает {@code File[]} — массив путей к уже сохранённым
+ *     на диске файлам. Данных в этих объектах нет: {@link File} — это
+ *     ссылка на файл в файловой системе, ~100 байт.
+ *
+ * Формат бинарной части на проводе (не изменился):
+ *
+ *     [1 байт: флаг продолжения (1 = есть следующий кусок, 0 = последний)]
+ *     [4 байта: длина этого куска (big-endian int)]
+ *     [N байт: данные куска]
+ *
+ * Маркер конца списка файлов — пустой кусок без продолжения:
+ *
+ *     [0][0][0][0][0]   (continueFlag = 0, chunkSize = 0)
  *
  * @author User
  */
@@ -55,6 +64,20 @@ public class Server {
     private static final int THREAD_POOL_SIZE = 4;
 
     /**
+     * Верхняя граница размера одного куска.
+     *
+     * Защищает сервер от злонамеренного или багованного клиента, который
+     * пришлёт {@code chunkSize = Integer.MAX_VALUE}, заставив сервер
+     * выделить ~2 ГБ на один кусок. При 4 рабочих потоках это быстро
+     * приведёт к OutOfMemoryError.
+     *
+     * Значение должно быть согласовано с клиентом. 64 МБ — разумный
+     * компромисс между накладными расходами протокола (5 байт заголовка
+     * на кусок) и пиком памяти.
+     */
+    private static final int MAX_CHUNK_SIZE = 64 * 1024 * 1024;
+
+    /**
      * Очередь входящих сокетов.
      * Основной поток только принимает подключения и кладёт их сюда,
      * а рабочие потоки разбирают очередь параллельно.
@@ -62,10 +85,12 @@ public class Server {
     private BlockingQueue<Socket> queue = new LinkedBlockingQueue<>();
 
     private int port;
+    
+    private final String MAIN_UPLOAD_DIR = "uploads" + File.separator; // путь к загруженным файлам от клиента
 
     /**
      * Объект, обрабатывающий маршрутизацию контроллеров.
-     * Именно ему сервер передаёт роут, параметры и бинарные файлы.
+     * Именно ему сервер передаёт роут, параметры и пути к сохранённым файлам.
      */
     public Controller controllerPull;
 
@@ -77,6 +102,8 @@ public class Server {
     /**
      * Запускает сервер: создаёт ServerSocket, стартует рабочие потоки
      * и входит в бесконечный цикл приёма подключений.
+     *
+     * НЕ ТРОГАЕМ — логика не менялась.
      */
     public void startServer() throws IOException, InterruptedException {
         ServerSocket serverSocket = new ServerSocket(port);
@@ -109,40 +136,11 @@ public class Server {
     }
 
     /**
-     * Разобранный запрос клиента.
-     *
-     * Отличие от предыдущей версии — тип поля binaryFiles.
-     * Раньше было byte[][]: один массив на файл.
-     * Теперь FileChunk[]: один FileChunk-цепочка на файл.
-     *
-     * Каждый FileChunk — это либо одиночный кусок (файл <= ~2ГБ),
-     * либо голова цепочки из нескольких кусков (файл > ~2ГБ).
-     */
-    private static class ClientRequest {
-
-        // Например: PersonController/createPersonAction
-        String route;
-
-        // Например: ["helloWorld!", "JCore!"]
-        String[] params;
-
-        // Например:
-        // [
-        //     FileChunk (цепочка для файла 1),
-        //     FileChunk (цепочка для файла 2),
-        //     FileChunk (цепочка для файла 3)
-        // ]
-        //
-        // Количество файлов в массиве — любое.
-        // Количество кусков внутри каждой цепочки — любое (ограничено только памятью).
-        FileChunk[] binaryFiles;
-    }
-
-    /**
      * Обрабатывает клиентское подключение в текущем потоке.
      *
-     * Логика не изменилась: читаем запрос, передаём в контроллер, отвечаем клиенту.
-     * Изменился только тип передаваемых бинарных данных — теперь FileChunk[].
+     * Логика не менялась: читаем запрос, передаём в контроллер, отвечаем клиенту.
+     * Изменился только тип передаваемых бинарных данных — теперь File[]
+     * (пути к файлам на диске), а не FileChunk[] (цепочки данных в памяти).
      */
     private void handleClient(Socket clientSocket) {
         try {
@@ -156,25 +154,35 @@ public class Server {
                 return;
             }
 
-            System.out.println("Получен роут: " + request.route);
+            System.out.println("Получен роут: " + request.getRoute());
 
-            // Передаём контроллеру роут, текстовые параметры и массив FileChunk-цепочек.
-            // Контроллер сам решает, склеивать ли куски в файл (через FileChunk.mergeAll)
-            // или обрабатывать их потоково.
+            // Передаём контроллеру роут, текстовые параметры и массив File —
+            // путей к уже сохранённым на диске файлам.
             Object result = controllerPull.startMethodByUrl(
-                    request.route,
-                    request.params,
-                    request.binaryFiles
+                    request
             );
 
             // Отправляем ответ клиенту.
-            PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true);
+            if (result instanceof ServerResponse) { // проверяем, что возвращаемый обьект принадлежит классу ServerResponse
+                ServerResponse resp = (ServerResponse) result;
+                resp.convertDataToBytesForStream(clientSocket.getOutputStream());
+            } else {
+                // иначе печатаем ошибку
+                System.out.println("ERROR: контроллер возвратил не обьект класса ServerResponse!");
+            }
 
+            //clientSocket.close();
+            
+            /*PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true);
+            
+            
             if (result != null) {
                 out.println(result.toString());
             } else {
                 out.println("ERROR: Controller returned null");
-            }
+            }*/
+            
+            
 
             System.out.println("Ответ отправлен клиенту");
 
@@ -183,6 +191,11 @@ public class Server {
 
         } catch (IOException e) {
             System.out.println("Ошибка при работе с клиентом: " + e.getMessage());
+            e.printStackTrace();
+        } catch (Throwable t) {
+            // Ловим всё, включая RuntimeException/Error из контроллера.
+            System.out.println("НЕОЖИДАННАЯ ОШИБКА в handleClient:");
+            t.printStackTrace();
         }
     }
 
@@ -192,7 +205,7 @@ public class Server {
      * Текстовая часть имеет формат:
      *   PersonController/createPersonAction<endl>helloWorld!<endl>JCore!<endl><BINARY>
      *
-     * После <BINARY> начинается бинарная часть — список файлов.
+     * После {@code <BINARY>} начинается бинарная часть — список файлов.
      *
      * Каждый файл — это один или несколько кусков.
      * Формат одного куска:
@@ -200,11 +213,10 @@ public class Server {
      *   [4 байта: длина этого куска]
      *   [N байт: данные куска]
      *
-     * Сервер НЕ склеивает куски — он строит цепочку FileChunk
-     * и передаёт её контроллеру как единый "файл".
+     * Сервер НЕ собирает куски в памяти — он пишет их на диск по мере
+     * поступления (см. {@link #readOneFileToDisk}).
      *
-     * Логика чтения текстовой части не изменилась — мы по-прежнему
-     * ищем маркер <BINARY> побайтово, чтобы не сломать бинарные данные.
+     * НЕ ТРОГАЕМ — логика поиска маркера не менялась.
      */
     private ClientRequest readClientRequest(InputStream inputStream) throws IOException {
 
@@ -265,11 +277,11 @@ public class Server {
      * остальные — текстовые параметры.
      *
      * Бинарная часть читается в цикле: пока в потоке есть файлы,
-     * вызываем {@link #readOneFile(DataInputStream)} и добавляем результат
-     * (голову цепочки кусков) в общий список файлов.
+     * вызываем {@link #readOneFileToDisk} и добавляем полученный File
+     * (путь к файлу на диске) в общий список.
      *
-     * ВАЖНО: здесь нет никакой склейки кусков. Каждый файл — это именно
-     * цепочка FileChunk, которую контроллер получит как единое целое.
+     * ВАЖНО: никакой склейки кусков в памяти не происходит. Каждый файл
+     * пишется на диск сразу, а контроллер получает только пути.
      */
     private ClientRequest createClientRequest(String text, DataInputStream binaryInput) throws IOException {
 
@@ -283,140 +295,206 @@ public class Server {
         }
 
         // Первый элемент — роут.
-        request.route = parsedData[0];
+        request.setRoute(parsedData[0]);
 
         // Остальные — текстовые параметры.
-        request.params = new String[parsedData.length - 1];
+        Data clientData = new Data();
+        clientData.setParams(new String[parsedData.length - 1]);
+        
+        request.setData(clientData); //.setParams(new String[parsedData.length - 1]);
         for (int i = 1; i < parsedData.length; i++) {
-            request.params[i - 1] = parsedData[i];
+            request.getData().getParams()[i - 1] = parsedData[i];
         }
 
         // Если бинарной части нет — возвращаем пустой массив.
         if (binaryInput == null) {
-            request.binaryFiles = new FileChunk[0];
+            request.getData().setBinaryFiles(new File[0]);
             return request;
         }
 
         // Читаем файлы, пока они есть в потоке.
-        List<FileChunk> files = new ArrayList<>();
+        //
+        // Имена файлов формируются сервером динамически (file_0._,
+        // file_1._, ...), чтобы несколько файлов в одном запросе
+        // не перезаписывали друг друга. Расширение — "jpg" по умолчанию;
+        // при необходимости можно вынести в параметр метода.
+        List<File> files = new ArrayList<>();
+        int index = 0;
 
         while (true) {
-            FileChunk head;
-            try {
-                head = readOneFile(binaryInput);
-            } catch (IOException e) {
-                // Поток закрылся или данных больше нет — прекращаем чтение.
+            System.out.println("DEBUG: читаю файл #" + index);
+            
+            // проверяем наличие директорий для файлов, если не существует - создаем
+            File parentDir = new File(MAIN_UPLOAD_DIR);
+            if(!parentDir.exists())
+            {
+                parentDir.mkdirs();
+            }
+            
+            String id = UUID.randomUUID().toString();
+            File f = readOneFileToDisk(binaryInput, MAIN_UPLOAD_DIR + "file_" + id, "bin");
+            if (f == null) {
+                System.out.println("DEBUG: файлов больше нет, прочитано " + files.size());
                 break;
             }
-
-            if (head == null) {
-                // Маркер конца списка файлов (пустой кусок без продолжения).
-                break;
-            }
-
-            files.add(head);
+            files.add(f);
+            index++;
         }
 
-        request.binaryFiles = files.toArray(new FileChunk[0]);
+        request.getData().setBinaryFiles(files.toArray(new File[0]));
+        System.out.println("DEBUG: итого файлов: " + request.getData().getBinaryFiles().length);
         return request;
     }
 
     /**
-     * Читает один файл как цепочку кусков.
+     * Читает один файл из потока и СРАЗУ пишет его куски на диск.
      *
-     * Алгоритм:
-     *   1. Читаем флаг продолжения (1 байт) и размер куска (4 байта).
-     *   2. Читаем данные куска.
-     *   3. Создаём FileChunk и добавляем его в конец цепочки.
-     *   4. Если флаг == 0 — файл закончился, возвращаем голову цепочки.
-     *      Если флаг == 1 — продолжаем читать следующий кусок того же файла.
+     * В отличие от старой версии, которая строила цепочку FileChunk
+     * в памяти, этот метод держит в heap только ОДИН кусок за раз:
+     *   - прочитали кусок,
+     *   - записали его в FileOutputStream,
+     *   - отпустили ссылку (GC соберёт),
+     *   - перешли к следующему.
      *
-     * Особые случаи:
-     *   - Пустой кусок с флагом 0 (chunkSize == 0, continueFlag == 0) —
-     *     это маркер конца списка файлов. Возвращаем null.
-     *   - Ошибка чтения в самом начале — тоже считаем концом списка (возвращаем head).
-     *   - Ошибка чтения в середине файла — тоже возвращаем head, но это уже
-     *     означает, что файл пришёл неполным. При желании можно бросать исключение.
+     * Пик памяти = размер одного куска, а не всего файла.
+     * Это позволяет корректно принимать файлы любого размера — хоть 10 ГБ,
+     * хоть 100 ГБ, — при фиксированном потреблении памяти.
      *
-     * Поле {@code next} в FileChunk НЕ final, поэтому мы можем достраивать
-     * цепочку по мере поступления кусков:
-     *   - head указывает на первый кусок;
-     *   - tail указывает на последний добавленный кусок;
-     *   - при добавлении нового куска делаем tail.next = newChunk и сдвигаем tail.
+     * Возвращаемое значение:
+     *   - {@link File} — путь к сохранённому файлу, если файл был прочитан;
+     *   - {@code null} — если достигнут маркер конца списка файлов
+     *     (пустой кусок без продолжения до того, как что-либо записали).
      *
-     * Это ровно тот сценарий, ради которого next сделан не final.
+     * Обработка ошибок:
+     *   - Если поток закрылся до начала файла — возвращаем null,
+     *     частично созданный файл удаляем.
+     *   - Если поток закрылся в середине файла — возвращаем то, что успели
+     *     записать (файл будет неполным). Альтернатива — бросить исключение;
+     *     текущее поведение выбрано как более мягкое.
+     *   - Если запись на диск упала — удаляем частично записанный файл
+     *     и пробрасываем исключение наверх.
      *
-     * @param in поток бинарных данных.
-     * @return голова цепочки кусков одного файла, либо null, если достигнут конец списка файлов.
+     * @param in        поток бинарных данных.
+     * @param fileName  имя файла БЕЗ расширения (например, "file_0").
+     * @param extension расширение (например, "jpg" или ".jpg" — нормализуется).
+     *                  Может быть {@code null} или пустым — тогда ".bin".
+     * @return File — путь к сохранённому файлу, либо null, если достигнут
+     *         конец списка файлов.
+     * @throws IOException при ошибке чтения из потока или записи на диск.
      */
-    private FileChunk readOneFile(DataInputStream in) throws IOException {
+    private File readOneFileToDisk(
+        DataInputStream in,
+        String fileName,
+        String extension
+) throws IOException {
 
-        // Голова цепочки — то, что вернём в итоге.
-        FileChunk head = null;
+    // ----------------------------------------------------------------
+    // 0. Нормализуем расширение и готовим целевой файл.
+    // ----------------------------------------------------------------
+    String suffix;
+    if (extension == null || extension.isEmpty()) {
+        suffix = ".bin";
+    } else if (extension.startsWith(".")) {
+        suffix = extension;
+    } else {
+        suffix = "." + extension;
+    }
 
-        // Хвост цепочки — последний добавленный кусок.
-        // Нужен, чтобы добавлять следующий кусок за O(1), а не пробегать всю цепочку каждый раз.
-        FileChunk tail = null;
+    File output = new File(fileName + suffix);
+
+    System.out.println("DEBUG: создаю " + output.getAbsolutePath());
+
+    if (output.exists()) {
+        boolean deleted = output.delete();
+        System.out.println("DEBUG: удалил старый? " + deleted);
+    }
+
+    // Флаг, что мы записали хотя бы один кусок.
+    boolean wroteAnyChunk = false;
+
+    // ВАЖНО: поток открываем внутри try, но НЕ оборачиваем в try-with-resources
+    // вокруг всего цикла — иначе delete() в catch сработает до close().
+    FileOutputStream fos = null;
+
+    try {
+        fos = new FileOutputStream(output);
 
         while (true) {
 
-            // Шаг 1. Читаем флаг продолжения.
-            // readByte() возвращает signed byte, поэтому приводим к unsigned через & 0xFF.
-            // Получаем 0 или 1 (по протоколу), но на всякий случай допускаем любое значение != 0
-            // как "есть продолжение" — см. проверку ниже.
             int continueFlag;
+            int chunkSize;
+
             try {
+                System.out.println("DEBUG: читаю заголовок куска...");
                 continueFlag = in.readByte() & 0xFF;
+                chunkSize = in.readInt();
+                System.out.println("DEBUG: continueFlag=" + continueFlag
+                        + ", chunkSize=" + chunkSize);
             } catch (IOException e) {
-                // Поток закрылся — файлов больше нет.
-                return head;
+                System.out.println("DEBUG: EOF на чтении заголовка, "
+                        + "wroteAnyChunk=" + wroteAnyChunk);
+
+                // Закрываем поток ДО удаления, иначе Windows не даст удалить.
+                try { fos.close(); } catch (IOException ignored) {}
+                fos = null;
+
+                if (!wroteAnyChunk) {
+                    boolean deleted = output.delete();
+                    System.out.println("DEBUG: удалил пустой файл? " + deleted);
+                    return null;
+                }
+                return output;
             }
 
-            // Шаг 2. Читаем размер куска (4 байта, big-endian).
-            // readInt() читает именно 4 байта и собирает их в int.
-            int chunkSize = in.readInt();
-
-            // Шаг 3. Проверяем маркер конца списка файлов:
-            // пустой кусок без продолжения. Так клиент сигнализирует,
-            // что файлов больше не будет.
-            if (chunkSize == 0 && continueFlag == 0) {
-                return head;
+            // Маркер конца списка файлов.
+            if (chunkSize == 0 && continueFlag == 0 && !wroteAnyChunk) {
+                try { fos.close(); } catch (IOException ignored) {}
+                fos = null;
+                boolean deleted = output.delete();
+                System.out.println("DEBUG: маркер конца, удалил? " + deleted);
+                return null;
             }
 
-            // Защита от некорректных данных.
             if (chunkSize < 0) {
                 throw new IOException("Некорректный размер куска: " + chunkSize);
             }
+            if (chunkSize > MAX_CHUNK_SIZE) {
+                throw new IOException(
+                        "Слишком большой кусок: " + chunkSize
+                                + " (максимум " + MAX_CHUNK_SIZE + ")"
+                );
+            }
 
-            // Шаг 4. Читаем данные куска целиком.
-            // readFully блокируется, пока не прочитает ровно chunkSize байт
-            // (или не бросит EOFException, если поток закрылся раньше).
             byte[] chunkData = new byte[chunkSize];
             in.readFully(chunkData);
+            fos.write(chunkData);
+            wroteAnyChunk = true;
 
-            // Шаг 5. Создаём узел цепочки.
-            FileChunk chunk = new FileChunk(chunkData);
+            System.out.println("DEBUG: записал кусок " + chunkSize + " байт");
 
-            // Шаг 6. Добавляем кусок в конец цепочки.
-            if (head == null) {
-                // Это первый кусок файла — он же и голова, и хвост.
-                head = chunk;
-                tail = chunk;
-            } else {
-                // Присоединяем новый кусок после текущего хвоста
-                // и сдвигаем хвост. Именно ради этой операции next не final.
-                tail.next = chunk;
-                tail = chunk;
-            }
-
-            // Шаг 7. Если флаг == 0 — файл закончился, возвращаем голову.
-            // Если флаг != 0 — значит, будет ещё кусок этого же файла,
-            // и цикл продолжается.
             if (continueFlag == 0) {
-                return head;
+                fos.close();
+                fos = null;
+                System.out.println("DEBUG: файл готов: "
+                        + output.getAbsolutePath()
+                        + ", размер " + output.length());
+                return output;
             }
         }
+
+    } catch (IOException e) {
+        // Закрываем поток, потом удаляем — иначе Windows не даст.
+        if (fos != null) {
+            try { fos.close(); } catch (IOException ignored) {}
+        }
+        try {
+            Files.deleteIfExists(output.toPath());
+        } catch (IOException suppressed) {
+            e.addSuppressed(suppressed);
+        }
+        throw e;
     }
+}
 
     /**
      * Парсит запрос пользователя по разделителю.
